@@ -7,12 +7,14 @@ const dotenv = require('dotenv');
 dotenv.config();
 
 const app = express();
-const port = 8080;
+const port = 4000;
 
 app.use(bodyParser.json());
 app.use(bodyParser.json({limit: '5mb'}));
 app.use(bodyParser.urlencoded({limit: '5mb', extended: true}));
 
+
+console.log(process.env)
 // Configure suas credenciais da Backblaze
 const b2 = new B2({
   accountId: process.env.B2_ACCOUNT,
