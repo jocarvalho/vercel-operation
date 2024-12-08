@@ -14,51 +14,46 @@ app.use(bodyParser.json({limit: '5mb'}));
 app.use(bodyParser.urlencoded({limit: '5mb', extended: true}));
 
 
-console.log(process.env)
-// Configure suas credenciais da Backblaze
 const b2 = new B2({
   accountId: process.env.B2_ACCOUNT,
   applicationKey: process.env.B2_TOKEN,
 });
 
-// Conectar-se à Backblaze
-b2.authorize()
-  .then((auth) => {
-    console.log('Conectado à Backblaze B2', auth.data);
-  })
-  .catch(err => {
-    console.error('Erro de autorização:', err);
-  });
+app.use((req,res, next)=>{
 
+  b2.authorize()
+    .then((auth) => {
+      console.log('Conectado à Backblaze B2', auth.data);
+    })
+    .catch(err => {
+      console.error('Erro de autorização:', err);
+  });
+  next();
+})
   
-  app.post('/post-file', (req, res) =>{
+app.post('/post-file', (req, res) =>{
     console.log(req.body)
     const fileName = req.body.fileName;
-
 
     b2.getUploadUrl({
         bucketId: 'a2ba2e37a0b730358a99091c',
     }).then((response) => {
-        console.log(
-            "getUploadUrl",
-            response.data.uploadUrl
-        );
+        console.log("getUploadUrl", response.data.uploadUrl);
         b2.uploadFile({
             bucketId: 'somos-impar-assets',
             uploadAuthToken: response.data.authorizationToken,
             uploadUrl:response.data.uploadUrl,
             fileName: fileName,
             data: fs.readFileSync(fileName)
-          })
-            .then(response => {
+          }).then(response => {
                 console.log(response);
                 res.status(200).send(response.data);
-            })
-            .catch(err => {
+          }).catch(err => {
               console.error('Erro durante o upload para a Backblaze B2:', err);
               res.status(500).send('Erro interno no servidor');
             });
-    }).catch(console.error);
+    })
+    .catch(console.error);
 
 });
   
