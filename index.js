@@ -3,9 +3,7 @@ const B2 = require('backblaze-b2');
 const fs = require('fs');
 const path = require('path');
 var bodyParser = require('body-parser');
-const dotenv = require('dotenv');
-dotenv.config();
-
+const multer = require('multer');
 const app = express();
 const port = 4000;
 
@@ -13,68 +11,87 @@ app.use(bodyParser.json());
 app.use(bodyParser.json({limit: '5mb'}));
 app.use(bodyParser.urlencoded({limit: '5mb', extended: true}));
 
-
 const b2 = new B2({
   accountId: process.env.B2_ACCOUNT,
-  applicationKey: process.env.B2_TOKEN,
+  applicationKey: process.env.B2_TOKEN
 });
 
-app.use((req,res, next)=>{
+let authorizationToken = null;
+let apiUrl = null;
+let tokenExpirationTime = null;
+let uploadUrl = null;
+let uploadAuthToken = null;
 
-  b2.authorize()
-    .then((auth) => {
-      console.log('Conectado à Backblaze B2', auth.data);
+async function authenticateB2() {
+  try {
+    const authResponse = await b2.authorize();
+    authorizationToken = authResponse.data.authorizationToken;
+    apiUrl = authResponse.data.apiUrl;
+    tokenExpirationTime = Date.now() + authResponse.expiresIn * 1000;
+  } catch (error) {
+    console.error('Erro na autenticação:', error);
+    throw error;
+  }
+}
+
+function isTokenExpired() {
+  return Date.now() >= tokenExpirationTime;
+}
+
+async function ensureValidToken() {
+  if (!authorizationToken || isTokenExpired()) {
+    console.log('Token has expired or not found, do auth now...');
+    await authenticateB2();
+  }
+}
+
+app.use(async (req, res, next) => {
+  try {
+    await ensureValidToken();
+    next();
+  } catch (error) {
+    res.status(500).json({ error: 'Erro ao garantir o token de autenticação' });
+  }
+});
+
+app.get('/download', (req, res) => {
+    const fileName = req.query.file;
+    b2.downloadFileByName({
+      bucketName: 'somos-impar-assets',
+      fileName: fileName,
+      responseType: 'arraybuffer'
     })
-    .catch(err => {
-      console.error('Erro de autorização:', err);
-  });
-  next();
-})
+      .then(response => {
+          res.setHeader('Content-Type', response.headers['content-type']);
+          res.status(200).send(response.data)
+      })
+      .catch(err => {
+        console.error(`Erro durante o download do ${fileName}`, err);
+        res.status(500).send('internal server error');
+      });
+});
   
 app.post('/post-file', (req, res) =>{
-    console.log(req.body)
     const fileName = req.body.fileName;
-
     b2.getUploadUrl({
         bucketId: 'a2ba2e37a0b730358a99091c',
     }).then((response) => {
-        console.log("getUploadUrl", response.data.uploadUrl);
         b2.uploadFile({
             bucketId: 'somos-impar-assets',
-            uploadAuthToken: response.data.authorizationToken,
-            uploadUrl:response.data.uploadUrl,
+            uploadAuthToken: authorizationToken,
+            uploadUrl:apiUrl,
             fileName: fileName,
             data: fs.readFileSync(fileName)
           }).then(response => {
                 console.log(response);
                 res.status(200).send(response.data);
           }).catch(err => {
-              console.error('Erro durante o upload para a Backblaze B2:', err);
-              res.status(500).send('Erro interno no servidor');
+              let errorMsg = `Error on uploadfile: ${fileName}`
+              console.error(errorMsg, err);
+              res.status(500).send(errorMsg);
             });
     })
     .catch(console.error);
-
-});
-  
-
-// Rota para baixar um arquivo da Backblaze B2
-app.get('/download', (req, res) => {
-  const fileName = req.query.file;
-  console.log(fileName)
-  b2.downloadFileByName({
-    bucketName: 'somos-impar-assets',
-    fileName: fileName,
-    responseType: 'arraybuffer'
-  })
-    .then(response => {
-        res.setHeader('Content-Type', response.headers['content-type']);
-        res.status(200).send(response.data)
-    })
-    .catch(err => {
-      console.error('Erro durante o download da Backblaze B2:', err);
-      res.status(500).send('Erro interno no servidor');
-    });
 });
 
 app.delete('/delete-file', async (req, res) => {
@@ -89,11 +106,60 @@ app.delete('/delete-file', async (req, res) => {
         res.status(200).send(response.data)
     })
     .catch(err => {
-      console.error('Erro durante o download da Backblaze B2:', err);
+      console.error(`Error on delete file ${fileName}`, err);
       res.status(500).send('Erro interno no servidor');
     });
 });
 
-app.listen(process.env.PORT || 8080);
+
+const upload = multer({ dest: 'uploads/' }); // Pasta temporária para armazenar o arquivo antes do upload
+
+async function getUploadUrl(bucketId) {
+  if (!uploadUrl || !uploadAuthToken) {
+    const response = await b2.getUploadUrl({
+      bucketId: bucketId
+    });
+    uploadUrl = response.data.uploadUrl;
+    uploadAuthToken = response.data.authorizationToken;
+  }
+
+  return { uploadUrl, uploadAuthToken };
+}
+
+
+// Endpoint para upload de arquivo
+app.post('/upload', upload.single('file'), async (req, res) => {
+  try {
+    const bucketId = 'a2ba2e37a0b730358a99091c';  // Substitua pelo seu Bucket ID
+    const { uploadUrl, uploadAuthToken } = await getUploadUrl(bucketId);
+
+    const filePath = path.join(__dirname, req.file.path); 
+
+    // Fazendo o upload do arquivo
+    const fileBuffer = fs.readFileSync(filePath);
+    let fileName = filePath.substring(filePath.lastIndexOf('/')+1)
+    console.log('fileName', fileName)
+    
+    
+    const uploadResponse = await b2.uploadFile({
+      uploadUrl: uploadUrl,
+      uploadAuthToken: uploadAuthToken,
+      fileName: fileName,
+      data: fileBuffer
+    });
+
+    // Excluindo o arquivo temporário após o upload
+    fs.unlinkSync(filePath);
+
+    res.status(200).send(uploadResponse.data);
+
+  } catch (error) {
+    console.log(error)
+    res.status(500).json({ error: 'Erro ao fazer upload do arquivo', 'err': error });
+  }
+});
+
+
+app.listen(process.env.PORT || port);
 
 module.exports = app;
