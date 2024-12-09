@@ -137,7 +137,7 @@ app.post('/upload', upload.single('file'), async (req, res) => {
 
     // Fazendo o upload do arquivo
     const fileBuffer = fs.readFileSync(filePath);
-    let fileName = filePath.substring(filePath.lastIndexOf('/')+1)
+    let fileName = filePath.substring(filePath.lastIndexOf('/')+1).concat('.pdf')
     console.log('fileName', fileName)
     
     
