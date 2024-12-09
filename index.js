@@ -112,7 +112,7 @@ app.delete('/delete-file', async (req, res) => {
 });
 
 
-const upload = multer({ dest: 'uploads/' }); // Pasta temporária para armazenar o arquivo antes do upload
+const upload = multer({ dest: '/tmp/' }); // Pasta temporária para armazenar o arquivo antes do upload
 
 async function getUploadUrl(bucketId) {
   if (!uploadUrl || !uploadAuthToken) {
